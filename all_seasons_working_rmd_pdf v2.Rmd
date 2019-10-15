@@ -1,0 +1,529 @@
+---
+title: "All Seasons Portfolio Part 1"
+author: "Stephen Lung"
+date: "10/11/2019"
+output:
+  pdf_document: default
+  html_document:
+    code_folding: show #or show
+    df_print: paged #or tibble
+    highlight: tango 
+    number_sections: yes #or no
+    theme: flatly #from bootswitch themes
+    toc: yes #shows table of contents
+    toc_depth: 2
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      fig.align = "center",
+                        message = FALSE)
+```
+
+
+```{r}
+setwd("C:/Users/admin/Dropbox/Business University Science/Personal Portfolio")
+# pkg <- c("tidyquant", "furrr", "plotly")
+# install.packages(pkg)
+
+if(!require(pacman)) install.packages("pacman")
+pacman::p_load("tidyquant",
+               "tidyr",
+               "furrr", 
+               "plotly",
+               "tibble",
+               "dplyr",
+               "highcharter",
+               "timetk",
+               "webshot")
+webshot::install_phantomjs()                    
+screenshot.opts = list(delay = 2, cliprect = 'viewport')
+
+```
+
+# All Seasons Portfolio Part 1
+
+My second post to connect my readings with my personal passion.
+
+
+# Three items coincided to make this idea come to fruition.
+
+1. Watching Lab 9: Finance with R - Performance Analysis & Portfolio Optimization with tidyquant from Matt Dancho's Business Science University (https://www.business-science.io/)
+
+2. Reading Tony Robbin's Master the Game: 7 Simple Steps to Financial Freedom and the concept of the All Season's fund by Ray Dalio (https://www.iwillteachyoutoberich.com/blog/all-weather-portfolio/)
+
+3. Reading Reproducible Finance with R: Code Flows and Shiny Apps for Portfolio Analysis by Jonathan K. Regenstein who is Director of Finance Services at RStudio (http://www.reproduciblefinance.com/)
+
+_Credits go to both Matt Dancho and Jonathan K Regenstein in making this post possible. Matt for educating me and creating the tidyquant package and Jonathan for putting together a book for beginners. Also to Z. Du for putting together an Rmarkdown file to inspire me to write my own._
+
+# Introduction to my Personal Passion
+
+## Wealth Management Undergraduate Class 
+
+During my undergraduate wealth management class, I recall a significant time was spent covering core concepts like diversification, portfolio rebalancing and modern portfolio theory. Despite learning all the theory, one question that I could never answer was how much diversification is enough? Thus, I set an objective to use data science to help me find the optimal way to allocate my portfolio. 
+
+Using techniques gleaned from Matt Dancho's Learning Lab 9 on Finance with R and the tidyquant package, I took on the challenge to create my personal investment portfolio.
+
+__Objective and Key Result__
+
+- __Objective:__ Determine an asset allocation for my personal investment portfolio
+
+- __Key Result:__ Develop a model that consumes 5 securities based on Ray Dalio's All Weather Fund guidance and then outputs the optimal asset allocation with periodic calibration of asset allocation going forward   
+
+
+## Master the Game: 7 Simple Steps to Financial Freedom - Tony Robbin
+
+_"Look for something you love to do and do it well. Go for it. It will give you satisfaction in life. It could mean money, but it may not. It could mean titles, but it may not. But it will bring you satisfaction." - Tony Robbins_
+
+In the world of finance and investing, it is a zero sum game where investors will exploit the advantages they have through skill or technology to make a return (like Flash Boys with HFT in US equity market). Investing in today's market is similar to playing poker with the best players in the world who play around the clock and have nearly unlimited resources. As an amateur retail investor, timing the market is like playing a losing game. So I began to seek a solution beyond mutual funds and stock picking to satisfy my portfolio requirements.    
+
+In Tony Robbin's book, he interviews multiple iconic investors to understand their asset allocation including David Swensen, Jack Bogle, Warren Buffet and Ray Dalio. In this book, I was first introduced to hedge fund manager Ray Dalio's 'All Seasons Portfolio'. In a nutshell, it was in response to a basic question that Ray Dalio was asked. "If I could pass on any information to my next generation who may or may not have as diverse of a financial literacy as Ray and can stand the test of time, what would it be?"
+For those who don't know Ray, Ray Dalio is the founder of Bridgewater Associates, the "world's largest hedge fund firm" and who predicted the 2008 financial crisis.  
+
+I sought to understand more about the All Seasons Portfolio by choosing index funds that fit within the portfolio allocation. Please read this article for more information: (https://www.iwillteachyoutoberich.com/blog/all-weather-portfolio/)
+
+To illustrate, I have used the 5 index funds listed in the article mentioned above to start my analysis:
+
+__Breakdown of the All Seasons Portfolio__
+
+1. 40% Long Term Bonds (TLT)
+
+2. 30% Stocks (VTI)
+
+3. 15% Intermediate Term Bonds (IEF)
+
+4. 7.5% Gold (GLD)
+
+5. 7.5% Commodities (DBC)
+
+# My Workflow
+
+Here's a breakdown of the workflow I used to create the All Seasons Portfolio: 
+
+1. Import the data of the stock prices using tq_get from tidyquant
+
+2. Transform stock prices to returns using tq_transmute
+
+3. Building a portfolio based on the allocation of Ray Dalio's All Weather Fund using tq_portfolio
+
+4. Visualize returns and sharpe ratio with ggplot2
+
+5. Visualize the investment growth of the portfolio based on a $10,000 investment
+
+# Walk through - Building the All Weather Fund portfolio with tidyquant
+
+## Import Data
+
+Tq_get will grab the 30 years of daily stock prices from Yahoo Finance based on each symbol specified. 
+
+```{r, echo = TRUE}
+#1.0 IMPORT DATA ----
+symbols <- c("VTI", "TLT", "IEF", "GLD", "DBC")
+end <- "2019-06-30" %>% ymd()
+start <- end - years(30) + days(1)
+
+raw_data <- symbols %>% 
+    tq_get(get = "stock.prices",
+           from = start,
+           to = end)
+```
+
+From the table, I understand each fund has a different origination date, which will affect the comparability of my financial return calculations. A closer look into the data, the earliest date with data from all funds is February 6, 2006. 
+
+```{r, echo = TRUE}
+raw_data %>% 
+    group_by(symbol) %>% 
+    summarise(min_date = min(date), 
+              max_date = max(date))
+```
+
+## Transform stock prices to returns
+
+Tq_transmute will transform the retrieved stock prices into monthly returns using the "adjusted" stock prices. 
+
+```{r, echo = TRUE}
+# 2.0 TRANSFORM TO RETURNS ----
+# normal returns
+returns_reg_tbl <- raw_data %>% 
+    select(symbol, date, adjusted) %>% 
+    group_by(symbol) %>% 
+    tq_transmute(select = adjusted,
+                 mutate_fun = periodReturn,
+                 period = "monthly") %>% 
+    ungroup() %>% 
+
+    #rollback to first day of the month - ETF Issue ----
+    mutate(date = lubridate::rollback(date, roll_to_first = TRUE))
+```
+
+From the table, the last day in April 2006 is 28th yet there are 30 days in the month of April (perhaps due to the dividend date on the very last day of the month). This would cause downstream impacts when I attempt to union an individual security or benchmarked funds which can have the last day of April falling outside of April 28th. A quick fix to normalize the dates is the lubridate package. In this case, I have roll-backed the monthly returns to the first day of the month. 
+
+```{r, echo = TRUE}
+raw_data %>% 
+    select(symbol, date, adjusted) %>% 
+    group_by(symbol) %>% 
+    tq_transmute(select = adjusted,
+                 mutate_fun = periodReturn,
+                 period = "monthly") %>% 
+    ungroup() %>% 
+    spread(symbol, monthly.returns) %>% 
+    na.omit()
+```
+
+## Evaluating each fund {.tabset .tabset-face .tabset-pills}
+### Histogram of Returns
+```{r}
+b <- returns_reg_tbl %>% 
+    ggplot(aes(x = monthly.returns)) +
+    geom_density(aes(colour = symbol), alpha = 1) +
+    geom_histogram(aes(fill = symbol), alpha = 0.45, binwidth = .005) +
+    guides(colour = FALSE) + 
+    labs(title = "Spread of Monthly Returns of Index Funds",
+         subtitle = "Fund IEF has the least variance in distribution",
+         caption = "Ray Dalio's All Weather Funds") +
+    theme_tq() +
+    facet_wrap(~symbol) +
+    ylab("Count of Monthly Returns") +
+    xlab("Monthly Returns") + 
+    scale_x_continuous(labels = scales::percent)
+
+b
+```
+
+### Time Series of Returns
+```{r}
+#Time Series of Monthly Returns
+c <- returns_reg_tbl %>% 
+    ggplot(aes(date, monthly.returns, colour = symbol)) + 
+    geom_line() +
+    facet_wrap(~ symbol, scales = "free_y") +
+    labs(title = "Monthly Returns of Index Funds (2001 - 2019)",
+         subtitle = "As expected, returns are most volatile in 2008/09",
+         caption = "Ray Dalio's All Weather Funds", 
+         y = "Monthly Returns", x = "") +
+    theme_tq() +
+    scale_y_continuous(labels = scales::percent) + 
+    geom_smooth(method = 'lm')
+
+c
+
+```
+
+### Time Series of Stock Price
+```{r}
+#Time Series of Stock Price
+d <- raw_data %>% 
+    ggplot(aes(date, adjusted, colour = symbol)) + 
+    geom_line() + 
+    facet_wrap(~ symbol, scales = "free_y") +
+    scale_y_continuous(labels = scales::dollar) + 
+    theme_tq() +
+    scale_color_tq() + 
+    labs(title = "Adjusted Stock Price of Index Funds (2001 - 2019)",
+         subtitle = "Rising Trend in Stocks, Treasury except for Gold and Commodity",
+         y = "Adjusted Stock Price", x = "") 
+
+d 
+```
+
+### Sharpe Ratio 
+```{r}
+e <- returns_reg_tbl %>% 
+    group_by(symbol) %>% 
+    tq_performance(Ra = monthly.returns,
+                   performance_fun = SharpeRatio.annualized,
+                   scale = 12,
+                   Rf = 0.03 / 12) %>% #Divide risk free rate by 12 months
+    ungroup() %>% 
+    mutate(symbol = as.factor(symbol)) %>% 
+    mutate(`AnnualizedSharpeRatio(Rf=3%)` = round(`AnnualizedSharpeRatio(Rf=3%)`, 2)) %>% 
+    ggplot(aes(symbol, `AnnualizedSharpeRatio(Rf=3%)`, label = `AnnualizedSharpeRatio(Rf=3%)`)) +
+    geom_col(fill = "#2c3e50") +
+    theme_tq() + 
+    scale_color_tq() + 
+    geom_label(nudge_y = -0.05) +
+    labs(title = "Annualized Sharpe Ratio (RFR = 3%)",
+         subtitle = "Commodities fund (DBC) has negative sharpe ratio",
+         caption = "Ray Dalio's All Weather Funds",
+         y = "Sharpe Ratio",
+         x = "Ticker Symbol")
+
+e
+
+```
+
+\newpage
+## Building a portfolio based on the allocation of Ray Dalio's All Weather Fund using tq_portfolio
+
+This is a visual of the asset weighting in the portfolio. 
+
+```{r}
+#3.0 BUILDING A PORTFOLIO ----
+w <- c(0.3,
+       0.4,
+       0.15,
+       0.075,
+       0.075)
+
+wts_tbl <- tibble(symbols, w)
+
+
+wts_tbl %>% 
+    ggplot(aes(x = "", y = w, fill = symbols)) + 
+    geom_bar(width = 1, stat = "identity") + 
+    coord_polar("y", start = 0) + 
+    theme(axis.text.x = element_blank()) +
+    geom_text(label = scales::percent(w), position = position_stack(vjust = 0.5)) +
+    scale_fill_tq() + 
+    labs(x = "", y = "", fill = "",
+         title = "Asset weights in portfolio",
+         caption = "Ray Dalio's All Weather Funds"
+         )
+```
+
+tq_portfolio accepts a tibble with the stocks and asset weights, and aggregates a group of individual assets into a single return based on the weights specified. It will be rebalanced on a yearly basis. 
+
+```{r, echo = TRUE}
+returns_reg_date_tbl <- returns_reg_tbl %>% 
+    group_by(symbol) %>% 
+    filter(date >= "2006-02-01")
+
+returns_port_tbl <- returns_reg_date_tbl %>% 
+    tq_portfolio(assets_col = symbol,
+                 returns_col = monthly.returns,
+                 weights = wts_tbl,
+                 rebalance_on = "years") %>% 
+    add_column(symbol = "Portfolio", .before = 1) %>% 
+    rename(monthly.returns = portfolio.returns)
+end_port_date <- last(returns_port_tbl$date)
+
+returns_port_tbl
+
+```
+\newpage
+## Visualize the portfolio {.tabset .tabset-face .tabset-pills}
+### Time Series of Returns
+```{r}
+# Time Series of Portfolio Monthly Returns
+returns_port_tbl %>% 
+    ggplot(aes(x = date, y = monthly.returns)) + 
+    geom_bar(stat = "identity", fill = palette_light()[[1]]) + 
+    geom_smooth(method = "lm") + 
+    theme_tq() + 
+    labs(x = "", y = "Monthly Returns",
+         title = "Time Series of Portfolio Monthly Returns",
+         subtitle = "40% TLT, 30% VTI, 15% IEF, 7.5% GLD and 7.5% DBC",
+         caption = "Ray Dalio's All Weather Funds"
+         )
+```
+
+### Comparison of Returns
+
+```{r}
+#Visualizing to portfolio with individual funds
+total_returns_tbl <- returns_reg_date_tbl %>% 
+    bind_rows(returns_port_tbl)
+
+total_returns_tbl %>% 
+    ggplot(aes(x = date, y = monthly.returns)) +
+    geom_smooth(data = returns_port_tbl, 
+                aes(colour = symbol), 
+                se = FALSE, 
+                linetype= "dashed",
+                colour = "blue") +
+    geom_smooth(data = returns_reg_date_tbl, 
+                aes(colour = symbol), 
+                se = FALSE, 
+                linetype= "solid") +
+    scale_y_continuous(limits = c(-0.025, 0.025)) + 
+    theme_tq() +
+    scale_color_tq() + 
+    scale_y_continuous(labels = scales::percent) +
+    labs(title = "Monthly Returns of Portfolio vs Individual Fund",
+         subtitle = "Portfolio is the dashed blue line",
+         y = "Monthly Returns") + 
+    annotate(geom = "text",
+             x = end_port_date,
+             y = 0.01,
+             label = "Portfolio",
+             fontface = "plain")
+```
+
+### Sharpe Ratio
+
+```{r}
+#Sharpe Ratio
+total_returns_tbl %>% 
+    group_by(symbol) %>%
+    tq_performance(Ra = monthly.returns,
+                   performance_fun = SharpeRatio.annualized,
+                   scale = 12,
+                   Rf = 0.03 / 12) %>% 
+    ungroup() %>% 
+    mutate(symbol = as.factor(symbol)) %>% 
+    mutate(`AnnualizedSharpeRatio(Rf=3%)` = round(`AnnualizedSharpeRatio(Rf=3%)`, 2)) %>% 
+    ggplot(aes(symbol, `AnnualizedSharpeRatio(Rf=3%)`, label = `AnnualizedSharpeRatio(Rf=3%)`)) +
+    geom_col(fill = "#2c3e50") +
+    theme_tq() + 
+    geom_label(nudge_y = -0.05) +
+    labs(title = "Annualized Sharpe Ratio",
+         subtitle = "Portfolio has the highest sharpe ratio",
+         y = "Sharpe Ratio",
+         x = "")
+```
+
+### Portfolio Growth
+```{r}
+returns_investment_tbl <- returns_reg_date_tbl %>% 
+    tq_portfolio(assets_col = symbol,
+                 returns_col = monthly.returns,
+                 weights = wts_tbl,
+                 wealth.index = TRUE) %>% 
+    mutate(investment.growth = portfolio.wealthindex * 10000)
+
+returns_investment_tbl %>% 
+    ggplot(aes(x = date, y = investment.growth)) + 
+    geom_line(stat = "identity") + 
+    geom_smooth(method = "loess") + 
+    theme_tq() + 
+    scale_color_tq() +
+    scale_y_continuous(labels = scales::dollar) + 
+    labs(title = "All Seasons Fund Portfolio Growth",
+         subtitle = "40% TLT, 30% VTI, 15% IEF, 7.5% GLD and 7.5% DBC",
+         caption = "Ray Dalio's All Weather Funds",
+         x = "",
+         y = "Investment Growth")
+
+```
+
+\newpage
+## Putting it all together 
+
+This is the breakdown of asset allocation for the portfolio and individual securities assuming it was held on their own
+
+```{r, echo = TRUE}
+w_2 <- c(0.3, 0.4, 0.15, 0.075, 0.075,
+         1, 0, 0, 0, 0,
+         0, 1, 0, 0, 0,
+         0, 0, 1, 0, 0,
+         0, 0, 0, 1, 0,
+         0, 0, 0, 0, 1)
+
+weights_tbl <- tibble(symbols) %>% 
+    tq_repeat_df(n = 6) %>% 
+    bind_cols(tibble(w_2)) %>% 
+    group_by(portfolio) 
+
+weights_tbl %>% 
+    ungroup() %>% 
+    mutate(w_2 = paste0(w_2*100, "%")) %>% 
+    pivot_wider(names_from = symbols, values_from = w_2) %>% 
+    mutate(portfolio = case_when(portfolio == 1 ~ "All Seasons Portfolio",
+                                 portfolio == 2 ~ "VTI",
+                                 portfolio == 3 ~ "TLT",
+                                 portfolio == 4 ~ "IEF",
+                                 portfolio == 5 ~ "GLD",
+                                 portfolio == 6 ~ "DBC")) 
+```
+
+We apply tq_portfolio iteratively across the 6 portfolios to generate the investment growth returns based on a $10,000 investment.
+
+```{r, echo = TRUE}
+returns_multi_reg_date_tbl <- returns_reg_date_tbl %>% 
+    ungroup() %>% 
+    tq_repeat_df(n = 6)
+
+port_returns_investment_tbl <- returns_multi_reg_date_tbl %>% 
+    tq_portfolio(assets_col = symbol,
+                 returns_col = monthly.returns,
+                 weights = weights_tbl,
+                 wealth.index = TRUE) %>% 
+    mutate(investment.growth = portfolio.wealthindex * 10000)
+
+end_port_returns_investment_tbl <- last(port_returns_investment_tbl$date)
+```
+
+\newpage
+__Takeaway:__ As seen previously, the All Seasons Portfolio has a higher sharpe ratio - for every unit of risk, there is a higher rate of return. If we are pursuing a risk parity portfolio allocation strategy, this would yield an optimal level of return at the targeted risk level.
+
+```{r}
+port_returns_investment_tbl %>%
+    ungroup() %>% 
+    mutate(portfolio = case_when(portfolio == 1 ~ "All Seasons Portfolio",
+                                 portfolio == 2 ~ "VTI",
+                                 portfolio == 3 ~ "TLT",
+                                 portfolio == 4 ~ "IEF",
+                                 portfolio == 5 ~ "GLD",
+                                 portfolio == 6 ~ "DBC")) %>% 
+    mutate(portfolio = as.factor(portfolio)) %>% 
+    ggplot(aes(x = date, y = investment.growth, colour = portfolio)) + 
+    geom_line(stat = "identity") + 
+    geom_smooth(method = "loess") + 
+    theme_tq() + 
+    scale_color_tq() + 
+    scale_y_continuous(labels = scales::dollar) + 
+    labs(title = "All Seasons Fund Portfolio Growth vs Standalone Security Growth",
+         subtitle = "40% TLT, 30% VTI, 15% IEF, 7.5% GLD and 7.5% DBC",
+         caption = "Ray Dalio's All Weather Funds",
+         x = "",
+         y = "Investment Growth") +
+    annotate(geom = "text",
+             x = end_port_returns_investment_tbl,
+             y = 24000,
+             label = "Portfolio",
+             fontface = "plain")
+```
+
+\newpage
+This chart provides are more compelling illustration as an HTML where you can hover over the different points and see the tooltip change over time. 
+
+```{r}
+high_chart_xts <- port_returns_investment_tbl %>%
+    ungroup() %>% 
+    mutate(portfolio = case_when(portfolio == 1 ~ "All Seasons Portfolio",
+                                 portfolio == 2 ~ "VTI",
+                                 portfolio == 3 ~ "TLT",
+                                 portfolio == 4 ~ "IEF",
+                                 portfolio == 5 ~ "GLD",
+                                 portfolio == 6 ~ "DBC")) %>% 
+    select(-portfolio.wealthindex) %>% 
+    pivot_wider(names_from = portfolio, values_from = investment.growth) %>% 
+    tk_xts(date_var = date,
+           silent = TRUE)
+
+highchart(type = "stock") %>% 
+    hc_title(text = "All Seasons Fund Portfolio Growth vs Standalone Security Growth") %>% 
+    hc_add_series(high_chart_xts[, 1], 
+                  name = "Portfolio") %>% 
+    hc_add_series(high_chart_xts[, 2],
+                  name = symbols[1]) %>% 
+    hc_add_series(high_chart_xts[,3],
+                  name = symbols[2]) %>% 
+    hc_add_series(high_chart_xts[,4],
+                  name = symbols[3]) %>% 
+    hc_add_series(high_chart_xts[,5],
+                  name = symbols[4]) %>% 
+    hc_add_series(high_chart_xts[,6],
+                  name = symbols[5]) %>%
+    # hc_tooltip(pointFormat = '{series.name}
+    #            ${point.y:,.0f}')
+    hc_tooltip(pointFormat =
+    "<span style=\"color:{series.color}\">{series.name}</span>:<b>${point.y:,.0f}</b><br/>",
+        shared=TRUE)
+
+```
+
+
+# Parting Thoughts
+It was really exciting to see the illustrations and analysis I could make from what I have learned so far in. I plan on writing a Part 2 to this post as I dig deeper into this portfolio by solving an optimization problem to determine the perfect asset weights. 
+
+- Back testing based on the historic financial returns
+
+- Integrating Fama & French factor models into the model
+
+- Monte Carlo Simulation 
+
+- Building a shiny dashboard to experiment with different portfolio combinations (perhaps Part 3)
+
+If you want to learn more, I am currently in a three part course learning Data Science for Business. I have completed Business Science 101 course and close to completion of the Business Science 201 course and I will be signing up for the 102 Shiny Web Applications course.
+
